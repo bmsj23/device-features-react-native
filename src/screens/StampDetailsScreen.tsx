@@ -1,5 +1,5 @@
-import { useState } from 'react';
-import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useCallback, useState } from 'react';
+import { Alert, Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Image } from 'expo-image';
 import ImageViewing from 'react-native-image-viewing';
@@ -19,7 +19,7 @@ export function StampDetailsScreen({
   navigation,
   route,
 }: StampDetailsScreenProps) {
-  const { state } = useAppContext();
+  const { state, removeEntry } = useAppContext();
   const theme = useAppTheme();
   const styles = createStyles(theme);
   const [isImageViewerVisible, setIsImageViewerVisible] = useState(false);
@@ -28,6 +28,48 @@ export function StampDetailsScreen({
     (entry) => entry.id === route.params.entryId
   );
   const hasLocation = selectedEntry?.address.trim().length ? true : false;
+
+  const handleRemoveEntry = useCallback(async () => {
+    if (!selectedEntry) {
+      return;
+    }
+
+    Alert.alert(
+      'Remove travel entry',
+      'This will remove the saved photo and location details from your diary.',
+      [
+        {
+          text: 'Cancel',
+          style: 'cancel',
+        },
+        {
+          text: 'Remove',
+          style: 'destructive',
+          onPress: () => {
+            void (async () => {
+              try {
+                await removeEntry(selectedEntry.id, selectedEntry.imageUri);
+                if (navigation.canGoBack()) {
+                  navigation.popToTop();
+                  return;
+                }
+
+                navigation.reset({
+                  index: 0,
+                  routes: [{ name: 'Home' }],
+                });
+              } catch {
+                Alert.alert(
+                  'Could not remove entry',
+                  'We could not remove this travel entry right now. Please try again.'
+                );
+              }
+            })();
+          },
+        },
+      ]
+    );
+  }, [navigation, removeEntry, selectedEntry]);
 
   if (!selectedEntry) {
     return (
@@ -121,6 +163,16 @@ export function StampDetailsScreen({
             ) : (
               <Text style={styles.coordinateValue}>Unavailable</Text>
             )}
+          </View>
+
+          <View style={styles.removeSection}>
+            <ActionButton
+              label="Remove Travel Entry"
+              onPress={() => {
+                void handleRemoveEntry();
+              }}
+              variant="danger"
+            />
           </View>
         </View>
       </ScrollView>
@@ -261,6 +313,9 @@ const createStyles = (theme: ReturnType<typeof useAppTheme>) =>
     },
     section: {
       gap: theme.spacing.sm,
+    },
+    removeSection: {
+      paddingTop: theme.spacing.md,
     },
     sectionLabel: {
       color: theme.colors.accent,
