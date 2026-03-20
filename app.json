@@ -1,11 +1,11 @@
 {
   "expo": {
-    "name": "device-features-react-native",
+    "name": "Travel Diary",
     "slug": "device-features-react-native",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
-    "userInterfaceStyle": "light",
+    "userInterfaceStyle": "automatic",
     "splash": {
       "image": "./assets/splash-icon.png",
       "resizeMode": "contain",
@@ -25,6 +25,28 @@
     },
     "web": {
       "favicon": "./assets/favicon.png"
-    }
+    },
+    "plugins": [
+      [
+        "expo-camera",
+        {
+          "cameraPermission": "Allow Travel Diary to capture photos for your travel journal.",
+          "recordAudioAndroid": false,
+          "barcodeScannerEnabled": false
+        }
+      ],
+      [
+        "expo-location",
+        {
+          "locationWhenInUsePermission": "Allow Travel Diary to attach your current address to each saved entry."
+        }
+      ],
+      [
+        "expo-notifications",
+        {
+          "defaultChannel": "travel-entry-saves"
+        }
+      ]
+    ]
   }
 }
