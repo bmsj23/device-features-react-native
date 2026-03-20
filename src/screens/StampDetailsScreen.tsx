@@ -1,6 +1,9 @@
-import { ScrollView, StyleSheet, Text, View } from 'react-native';
+import { useState } from 'react';
+import { Pressable, ScrollView, StyleSheet, Text, View } from 'react-native';
 import type { NativeStackScreenProps } from '@react-navigation/native-stack';
 import { Image } from 'expo-image';
+import ImageViewing from 'react-native-image-viewing';
+import { SafeAreaView } from 'react-native-safe-area-context';
 
 import { ActionButton } from '../components/ActionButton';
 import type { RootStackParamList } from '../navigation/types';
@@ -19,6 +22,7 @@ export function StampDetailsScreen({
   const { state } = useAppContext();
   const theme = useAppTheme();
   const styles = createStyles(theme);
+  const [isImageViewerVisible, setIsImageViewerVisible] = useState(false);
 
   const selectedEntry = state.entries.find(
     (entry) => entry.id === route.params.entryId
@@ -46,66 +50,113 @@ export function StampDetailsScreen({
     );
   }
 
+  const viewerImages = [{ uri: selectedEntry.imageUri }];
+
   return (
-    <ScrollView
-      contentContainerStyle={styles.scrollContent}
-      contentInsetAdjustmentBehavior="automatic"
-      style={styles.screen}
-      showsVerticalScrollIndicator={false}
-    >
-      <View style={styles.heroCard}>
-        <Text style={styles.eyebrow}>Stamp Details</Text>
-        <Text style={styles.title}>A closer look at this saved stop.</Text>
-        <Text style={styles.bodyText}>
-          Each stamp keeps the captured image and any saved location details in
-          your diary.
-        </Text>
-      </View>
-
-      <View style={styles.imageCard}>
-        <Image
-          cachePolicy="memory-disk"
-          contentFit="cover"
-          source={{ uri: selectedEntry.imageUri }}
-          style={styles.image}
-          transition={180}
-        />
-      </View>
-
-      <View style={styles.detailsCard}>
-        <View style={styles.stampMetaRow}>
-          <View style={styles.metaChip}>
-            <Text style={styles.metaChipLabel}>Saved</Text>
-            <Text style={styles.metaChipValue}>
-              {formatEntryDate(selectedEntry.createdAt)}
-            </Text>
-          </View>
-        </View>
-
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Location</Text>
-          <Text style={styles.addressValue}>
-            {hasLocation ? selectedEntry.address : 'Location unavailable'}
+    <>
+      <ScrollView
+        contentContainerStyle={styles.scrollContent}
+        contentInsetAdjustmentBehavior="automatic"
+        style={styles.screen}
+        showsVerticalScrollIndicator={false}
+      >
+        <View style={styles.heroCard}>
+          <Text style={styles.eyebrow}>Stamp Details</Text>
+          <Text style={styles.title}>A closer look at this saved stop.</Text>
+          <Text style={styles.bodyText}>
+            Each stamp keeps the captured image and any saved location details in
+            your diary.
           </Text>
         </View>
 
-        <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Coordinates</Text>
-          {selectedEntry.latitude !== null && selectedEntry.longitude !== null ? (
-            <>
-              <Text style={styles.coordinateValue}>
-                Latitude: {selectedEntry.latitude.toFixed(5)}
+        <Pressable
+          accessibilityHint="Opens the travel stamp image in full screen"
+          accessibilityRole="button"
+          onPress={() => {
+            setIsImageViewerVisible(true);
+          }}
+          style={({ pressed }) => [
+            styles.imageCard,
+            pressed ? styles.imageCardPressed : null,
+          ]}
+        >
+          <Image
+            cachePolicy="memory-disk"
+            contentFit="cover"
+            source={{ uri: selectedEntry.imageUri }}
+            style={styles.image}
+            transition={180}
+          />
+          <Text style={styles.imageHint}>Tap image to open full screen</Text>
+        </Pressable>
+
+        <View style={styles.detailsCard}>
+          <View style={styles.stampMetaRow}>
+            <View style={styles.metaChip}>
+              <Text style={styles.metaChipLabel}>Saved</Text>
+              <Text style={styles.metaChipValue}>
+                {formatEntryDate(selectedEntry.createdAt)}
               </Text>
-              <Text style={styles.coordinateValue}>
-                Longitude: {selectedEntry.longitude.toFixed(5)}
-              </Text>
-            </>
-          ) : (
-            <Text style={styles.coordinateValue}>Unavailable</Text>
-          )}
+            </View>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Location</Text>
+            <Text style={styles.addressValue}>
+              {hasLocation ? selectedEntry.address : 'Location unavailable'}
+            </Text>
+          </View>
+
+          <View style={styles.section}>
+            <Text style={styles.sectionLabel}>Coordinates</Text>
+            {selectedEntry.latitude !== null && selectedEntry.longitude !== null ? (
+              <>
+                <Text style={styles.coordinateValue}>
+                  Latitude: {selectedEntry.latitude.toFixed(5)}
+                </Text>
+                <Text style={styles.coordinateValue}>
+                  Longitude: {selectedEntry.longitude.toFixed(5)}
+                </Text>
+              </>
+            ) : (
+              <Text style={styles.coordinateValue}>Unavailable</Text>
+            )}
+          </View>
         </View>
-      </View>
-    </ScrollView>
+      </ScrollView>
+
+      <ImageViewing
+        animationType="fade"
+        backgroundColor="#000000"
+        doubleTapToZoomEnabled
+        HeaderComponent={() => (
+          <SafeAreaView edges={['top']} style={styles.viewerSafeArea}>
+            <View style={styles.viewerHeader}>
+              <Pressable
+                accessibilityRole="button"
+                onPress={() => {
+                  setIsImageViewerVisible(false);
+                }}
+                style={({ pressed }) => [
+                  styles.viewerCloseButton,
+                  pressed ? styles.viewerCloseButtonPressed : null,
+                ]}
+              >
+                <Text style={styles.viewerCloseText}>Close</Text>
+              </Pressable>
+            </View>
+          </SafeAreaView>
+        )}
+        imageIndex={0}
+        images={viewerImages}
+        onRequestClose={() => {
+          setIsImageViewerVisible(false);
+        }}
+        presentationStyle="fullScreen"
+        swipeToCloseEnabled
+        visible={isImageViewerVisible}
+      />
+    </>
   );
 }
 
@@ -157,11 +208,24 @@ const createStyles = (theme: ReturnType<typeof useAppTheme>) =>
       backgroundColor: theme.colors.surface,
       padding: theme.spacing.sm,
     },
+    imageCardPressed: {
+      opacity: 0.94,
+    },
     image: {
       width: '100%',
       height: 360,
       borderRadius: theme.radius.lg,
       backgroundColor: theme.colors.paper,
+    },
+    imageHint: {
+      color: theme.colors.mutedText,
+      fontFamily: theme.typography.mono,
+      fontSize: 11,
+      fontWeight: '700',
+      letterSpacing: 1.1,
+      paddingTop: theme.spacing.sm,
+      textAlign: 'center',
+      textTransform: 'uppercase',
     },
     detailsCard: {
       gap: theme.spacing.lg,
@@ -244,5 +308,30 @@ const createStyles = (theme: ReturnType<typeof useAppTheme>) =>
       color: theme.colors.mutedText,
       fontSize: 15,
       lineHeight: 22,
+    },
+    viewerSafeArea: {
+      paddingHorizontal: theme.spacing.lg,
+      paddingTop: theme.spacing.sm,
+    },
+    viewerHeader: {
+      flexDirection: 'row',
+      justifyContent: 'flex-end',
+    },
+    viewerCloseButton: {
+      borderRadius: theme.radius.pill,
+      borderWidth: 1,
+      borderColor: 'rgba(255, 255, 255, 0.24)',
+      backgroundColor: 'rgba(0, 0, 0, 0.52)',
+      paddingHorizontal: theme.spacing.md,
+      paddingVertical: theme.spacing.sm,
+    },
+    viewerCloseButtonPressed: {
+      opacity: 0.82,
+    },
+    viewerCloseText: {
+      color: '#FFFFFF',
+      fontSize: 14,
+      fontWeight: '700',
+      letterSpacing: 0.2,
     },
   });
