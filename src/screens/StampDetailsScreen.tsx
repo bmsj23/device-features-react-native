@@ -23,6 +23,7 @@ export function StampDetailsScreen({
   const selectedEntry = state.entries.find(
     (entry) => entry.id === route.params.entryId
   );
+  const hasLocation = selectedEntry?.address.trim().length ? true : false;
 
   if (!selectedEntry) {
     return (
@@ -56,8 +57,8 @@ export function StampDetailsScreen({
         <Text style={styles.eyebrow}>Stamp Details</Text>
         <Text style={styles.title}>A closer look at this saved stop.</Text>
         <Text style={styles.bodyText}>
-          Each stamp keeps the captured image, resolved address, and location
-          coordinates stored in your diary.
+          Each stamp keeps the captured image and any saved location details in
+          your diary.
         </Text>
       </View>
 
@@ -88,18 +89,26 @@ export function StampDetailsScreen({
         </View>
 
         <View style={styles.section}>
-          <Text style={styles.sectionLabel}>Address</Text>
-          <Text style={styles.addressValue}>{selectedEntry.address}</Text>
+          <Text style={styles.sectionLabel}>Location</Text>
+          <Text style={styles.addressValue}>
+            {hasLocation ? selectedEntry.address : 'Location unavailable'}
+          </Text>
         </View>
 
         <View style={styles.section}>
           <Text style={styles.sectionLabel}>Coordinates</Text>
-          <Text style={styles.coordinateValue}>
-            Latitude: {selectedEntry.latitude.toFixed(5)}
-          </Text>
-          <Text style={styles.coordinateValue}>
-            Longitude: {selectedEntry.longitude.toFixed(5)}
-          </Text>
+          {selectedEntry.latitude !== null && selectedEntry.longitude !== null ? (
+            <>
+              <Text style={styles.coordinateValue}>
+                Latitude: {selectedEntry.latitude.toFixed(5)}
+              </Text>
+              <Text style={styles.coordinateValue}>
+                Longitude: {selectedEntry.longitude.toFixed(5)}
+              </Text>
+            </>
+          ) : (
+            <Text style={styles.coordinateValue}>Unavailable</Text>
+          )}
         </View>
       </View>
     </ScrollView>

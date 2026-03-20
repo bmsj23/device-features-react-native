@@ -2,6 +2,7 @@ import { useCallback, useRef, useState } from 'react';
 import {
   ActivityIndicator,
   Alert,
+  Linking,
   ScrollView,
   StyleSheet,
   Text,
@@ -14,9 +15,15 @@ import { Image } from 'expo-image';
 
 import { ActionButton } from '../components/ActionButton';
 import type { RootStackParamList } from '../navigation/types';
+import {
+  extractGalleryCoordinatesAsync,
+  pickSingleImageFromGalleryAsync,
+  requestGalleryPermissionsAsync,
+} from '../services/gallery';
 import { deleteSavedPhotoAsync, persistCapturedPhotoAsync } from '../services/files';
 import {
   LocationLookupError,
+  resolveAddressFromCoordinatesAsync,
   resolveCurrentAddressAsync,
 } from '../services/location';
 import { sendEntrySavedNotificationAsync } from '../services/notifications';
@@ -26,6 +33,7 @@ import { createTravelEntryId } from '../utils/ids';
 import { hasResolvedAddress } from '../utils/validation';
 
 type AddEntryScreenProps = NativeStackScreenProps<RootStackParamList, 'AddEntry'>;
+type SourceSelection = 'camera' | null;
 
 export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
   const { addEntry } = useAppContext();
@@ -35,23 +43,31 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
   const [draft, setDraft] = useState<DraftEntryState>(
     createInitialDraftEntryState()
   );
+  const [sourceSelection, setSourceSelection] = useState<SourceSelection>(null);
   const [isCameraReady, setIsCameraReady] = useState(false);
+  const [galleryNeedsSettingsRecovery, setGalleryNeedsSettingsRecovery] =
+    useState(false);
   const cameraReference = useRef<CameraView | null>(null);
   const draftPhotoUriReference = useRef<string | null>(null);
 
-  const resetDraft = useCallback(async () => {
-    const draftPhotoUri = draftPhotoUriReference.current;
+  const resetDraft = useCallback(
+    async (options?: { keepCameraReady?: boolean }) => {
+      const draftPhotoUri = draftPhotoUriReference.current;
 
-    draftPhotoUriReference.current = null;
-    setIsCameraReady(false);
-    setDraft(createInitialDraftEntryState());
+      draftPhotoUriReference.current = null;
+      setSourceSelection(options?.keepCameraReady ? 'camera' : null);
+      setIsCameraReady(false);
+      setGalleryNeedsSettingsRecovery(false);
+      setDraft(createInitialDraftEntryState());
 
-    try {
-      await deleteSavedPhotoAsync(draftPhotoUri);
-    } catch {
-      // Temporary camera cache cleanup is best effort only.
-    }
-  }, []);
+      try {
+        await deleteSavedPhotoAsync(draftPhotoUri);
+      } catch {
+        // Temporary preview cleanup is best effort only.
+      }
+    },
+    []
+  );
 
   useFocusEffect(
     useCallback(() => {
@@ -59,6 +75,111 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
         void resetDraft();
       };
     }, [resetDraft])
+  );
+
+  const setCurrentLocationError = useCallback(
+    (message: string, preserveGalleryChoice = false) => {
+      setDraft((currentDraft) => ({
+        ...currentDraft,
+        latitude: null,
+        longitude: null,
+        address: '',
+        locationStrategy: 'current-device',
+        requiresGalleryLocationChoice: preserveGalleryChoice,
+        isResolvingAddress: false,
+        errorMessage: message,
+      }));
+    },
+    []
+  );
+
+  const applyCurrentLocationToDraft = useCallback(
+    async (options?: { preserveGalleryChoice?: boolean }) => {
+      const preserveGalleryChoice = options?.preserveGalleryChoice ?? false;
+
+      setDraft((currentDraft) => ({
+        ...currentDraft,
+        latitude: null,
+        longitude: null,
+        address: '',
+        locationStrategy: 'current-device',
+        requiresGalleryLocationChoice: preserveGalleryChoice,
+        isResolvingAddress: true,
+        errorMessage: null,
+      }));
+
+      try {
+        const resolvedAddress = await resolveCurrentAddressAsync();
+
+        setDraft((currentDraft) => ({
+          ...currentDraft,
+          latitude: resolvedAddress.latitude,
+          longitude: resolvedAddress.longitude,
+          address: resolvedAddress.address,
+          locationStrategy: 'current-device',
+          requiresGalleryLocationChoice: false,
+          isResolvingAddress: false,
+          errorMessage: null,
+        }));
+      } catch (error) {
+        const errorMessage =
+          error instanceof LocationLookupError
+            ? error.message
+            : 'We could not fetch your current address. Please try again.';
+
+        setCurrentLocationError(errorMessage, preserveGalleryChoice);
+      }
+    },
+    [setCurrentLocationError]
+  );
+
+  const applyGalleryMetadataLocationToDraft = useCallback(
+    async (coordinates: { latitude: number; longitude: number }) => {
+      setDraft((currentDraft) => ({
+        ...currentDraft,
+        latitude: coordinates.latitude,
+        longitude: coordinates.longitude,
+        address: '',
+        locationStrategy: 'gallery-metadata',
+        requiresGalleryLocationChoice: false,
+        isResolvingAddress: true,
+        errorMessage: null,
+      }));
+
+      try {
+        const resolvedAddress = await resolveAddressFromCoordinatesAsync(
+          coordinates
+        );
+
+        setDraft((currentDraft) => ({
+          ...currentDraft,
+          latitude: resolvedAddress.latitude,
+          longitude: resolvedAddress.longitude,
+          address: resolvedAddress.address,
+          locationStrategy: 'gallery-metadata',
+          requiresGalleryLocationChoice: false,
+          isResolvingAddress: false,
+          errorMessage: null,
+        }));
+      } catch (error) {
+        const errorMessage =
+          error instanceof LocationLookupError
+            ? error.message
+            : 'We found photo location metadata, but could not resolve an address from it.';
+
+        setDraft((currentDraft) => ({
+          ...currentDraft,
+          latitude: coordinates.latitude,
+          longitude: coordinates.longitude,
+          address: '',
+          locationStrategy: 'gallery-metadata',
+          requiresGalleryLocationChoice: false,
+          isResolvingAddress: false,
+          errorMessage: errorMessage,
+        }));
+      }
+    },
+    []
   );
 
   const handleCameraPermissionRequest = useCallback(async () => {
@@ -87,45 +208,106 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
     }
   }, [requestCameraPermission]);
 
-  const lookupCurrentAddress = useCallback(async () => {
-    setDraft((currentDraft) => ({
-      ...currentDraft,
-      latitude: null,
-      longitude: null,
-      address: '',
-      isResolvingAddress: true,
-      errorMessage: null,
-    }));
+  const replaceDraftPhotoAsync = useCallback(async (photoUri: string) => {
+    const previousDraftPhotoUri = draftPhotoUriReference.current;
 
-    try {
-      const resolvedAddress = await resolveCurrentAddressAsync();
+    draftPhotoUriReference.current = photoUri;
 
-      setDraft((currentDraft) => ({
-        ...currentDraft,
-        latitude: resolvedAddress.latitude,
-        longitude: resolvedAddress.longitude,
-        address: resolvedAddress.address,
-        isResolvingAddress: false,
-        errorMessage: null,
-      }));
-    } catch (error) {
-      const errorMessage =
-        error instanceof LocationLookupError
-          ? error.message
-          : 'We could not fetch your current address. Please try again.';
-
-      setDraft((currentDraft) => ({
-        ...currentDraft,
-        latitude: null,
-        longitude: null,
-        address: '',
-        isResolvingAddress: false,
-        errorMessage: errorMessage,
-      }));
+    if (previousDraftPhotoUri && previousDraftPhotoUri !== photoUri) {
+      try {
+        await deleteSavedPhotoAsync(previousDraftPhotoUri);
+      } catch {
+        // Replacing a draft should not fail because cleanup missed.
+      }
     }
   }, []);
 
+  const handleChooseCameraSource = useCallback(() => {
+    setGalleryNeedsSettingsRecovery(false);
+    setSourceSelection('camera');
+    setDraft((currentDraft) => ({
+      ...currentDraft,
+      errorMessage: null,
+    }));
+  }, []);
+
+  const handleChooseFromGallery = useCallback(async () => {
+    setGalleryNeedsSettingsRecovery(false);
+    setSourceSelection(null);
+
+    try {
+      const permissionResponse = await requestGalleryPermissionsAsync();
+
+      if (permissionResponse.status !== 'granted') {
+        setGalleryNeedsSettingsRecovery(!permissionResponse.canAskAgain);
+        setDraft((currentDraft) => ({
+          ...currentDraft,
+          errorMessage: permissionResponse.canAskAgain
+            ? 'Photo library permission is required before you can choose a gallery image.'
+            : 'Photo library access is turned off. Open Settings to choose a gallery image.',
+        }));
+        return;
+      }
+
+      const selectedAsset = await pickSingleImageFromGalleryAsync();
+
+      if (!selectedAsset) {
+        return;
+      }
+
+      await replaceDraftPhotoAsync(selectedAsset.uri);
+
+      setDraft((currentDraft) => ({
+        ...currentDraft,
+        photoUri: selectedAsset.uri,
+        photoSource: 'gallery',
+        selectedAssetId: selectedAsset.assetId ?? null,
+        latitude: null,
+        longitude: null,
+        address: '',
+        locationStrategy: null,
+        requiresGalleryLocationChoice: false,
+        isResolvingAddress: false,
+        isSaving: false,
+        errorMessage: null,
+      }));
+
+      const metadataCoordinates = await extractGalleryCoordinatesAsync(
+        selectedAsset
+      );
+
+      if (!metadataCoordinates) {
+        setDraft((currentDraft) => ({
+          ...currentDraft,
+          photoUri: selectedAsset.uri,
+          photoSource: 'gallery',
+          selectedAssetId: selectedAsset.assetId ?? null,
+          latitude: null,
+          longitude: null,
+          address: '',
+          locationStrategy: null,
+          requiresGalleryLocationChoice: true,
+          isResolvingAddress: false,
+          isSaving: false,
+          errorMessage:
+            'This photo does not include saved location metadata. Use your current location, leave the location unavailable, or choose another photo.',
+        }));
+        return;
+      }
+
+      await applyGalleryMetadataLocationToDraft(metadataCoordinates);
+    } catch {
+      setDraft((currentDraft) => ({
+        ...currentDraft,
+        errorMessage:
+          'We could not open the photo library right now. Please try again.',
+      }));
+    }
+  }, [applyGalleryMetadataLocationToDraft, replaceDraftPhotoAsync]);
+
   const handleCapture = useCallback(async () => {
+    setGalleryNeedsSettingsRecovery(false);
+
     if (!cameraReference.current || !isCameraReady) {
       setDraft((currentDraft) => ({
         ...currentDraft,
@@ -143,19 +325,23 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
         throw new Error('No captured photo was returned.');
       }
 
-      draftPhotoUriReference.current = capturedPhoto.uri;
+      await replaceDraftPhotoAsync(capturedPhoto.uri);
       setDraft((currentDraft) => ({
         ...currentDraft,
         photoUri: capturedPhoto.uri,
+        photoSource: 'camera',
+        selectedAssetId: null,
         latitude: null,
         longitude: null,
         address: '',
+        locationStrategy: 'current-device',
+        requiresGalleryLocationChoice: false,
         isResolvingAddress: false,
         isSaving: false,
         errorMessage: null,
       }));
 
-      await lookupCurrentAddress();
+      await applyCurrentLocationToDraft();
     } catch {
       setDraft((currentDraft) => ({
         ...currentDraft,
@@ -163,19 +349,78 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
           'We could not capture that photo. Please try taking the picture again.',
       }));
     }
-  }, [isCameraReady, lookupCurrentAddress]);
+  }, [applyCurrentLocationToDraft, isCameraReady, replaceDraftPhotoAsync]);
 
-  const handleRetake = useCallback(async () => {
-    await resetDraft();
-  }, [resetDraft]);
+  const handlePrimaryReplaceAction = useCallback(async () => {
+    if (draft.photoSource === 'gallery') {
+      await handleChooseFromGallery();
+      return;
+    }
+
+    await resetDraft({ keepCameraReady: true });
+  }, [draft.photoSource, handleChooseFromGallery, resetDraft]);
+
+  const handleRetryLocationResolution = useCallback(async () => {
+    if (
+      draft.locationStrategy === 'gallery-metadata' &&
+      draft.latitude !== null &&
+      draft.longitude !== null
+    ) {
+      await applyGalleryMetadataLocationToDraft({
+        latitude: draft.latitude,
+        longitude: draft.longitude,
+      });
+      return;
+    }
+
+    await applyCurrentLocationToDraft({
+      preserveGalleryChoice: draft.photoSource === 'gallery',
+    });
+  }, [
+    applyCurrentLocationToDraft,
+    applyGalleryMetadataLocationToDraft,
+    draft.latitude,
+    draft.locationStrategy,
+    draft.longitude,
+    draft.photoSource,
+  ]);
+
+  const handleUseCurrentLocationInstead = useCallback(async () => {
+    await applyCurrentLocationToDraft({ preserveGalleryChoice: true });
+  }, [applyCurrentLocationToDraft]);
+
+  const handleLeaveLocationUnavailable = useCallback(() => {
+    setDraft((currentDraft) => ({
+      ...currentDraft,
+      latitude: null,
+      longitude: null,
+      address: '',
+      locationStrategy: 'location-unavailable',
+      requiresGalleryLocationChoice: false,
+      isResolvingAddress: false,
+      errorMessage: null,
+    }));
+  }, []);
+
+  const handleOpenSettings = useCallback(async () => {
+    try {
+      await Linking.openSettings();
+    } catch {
+      Alert.alert(
+        'Settings unavailable',
+        'We could not open the device settings from here.'
+      );
+    }
+  }, []);
 
   const canSave =
     draft.photoUri !== null &&
-    draft.latitude !== null &&
-    draft.longitude !== null &&
-    hasResolvedAddress(draft.address) &&
     !draft.isResolvingAddress &&
-    !draft.isSaving;
+    !draft.isSaving &&
+    (draft.locationStrategy === 'location-unavailable' ||
+      (draft.latitude !== null &&
+        draft.longitude !== null &&
+        hasResolvedAddress(draft.address)));
 
   const handleSave = useCallback(async () => {
     if (!canSave || !draft.photoUri) {
@@ -197,9 +442,18 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
       await addEntry({
         id: createTravelEntryId(),
         imageUri: savedPhotoUri,
-        address: draft.address.trim(),
-        latitude: draft.latitude as number,
-        longitude: draft.longitude as number,
+        address:
+          draft.locationStrategy === 'location-unavailable'
+            ? ''
+            : draft.address.trim(),
+        latitude:
+          draft.locationStrategy === 'location-unavailable'
+            ? null
+            : draft.latitude,
+        longitude:
+          draft.locationStrategy === 'location-unavailable'
+            ? null
+            : draft.longitude,
         createdAt: new Date().toISOString(),
       });
 
@@ -212,10 +466,11 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
       try {
         await deleteSavedPhotoAsync(draft.photoUri);
       } catch {
-        // Temporary cache cleanup should not undo a successful save.
+        // Temporary preview cleanup should not undo a successful save.
       }
 
       draftPhotoUriReference.current = null;
+      setSourceSelection(null);
       setDraft(createInitialDraftEntryState());
       navigation.goBack();
 
@@ -240,20 +495,45 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
         ...currentDraft,
         isSaving: false,
         errorMessage:
-          'We could not save this entry. Please make sure the photo and address are ready, then try again.',
+          'We could not save this entry. Please make sure the photo is ready, then try again.',
       }));
     }
-  }, [addEntry, canSave, draft.address, draft.latitude, draft.longitude, draft.photoUri, navigation]);
+  }, [
+    addEntry,
+    canSave,
+    draft.address,
+    draft.latitude,
+    draft.locationStrategy,
+    draft.longitude,
+    draft.photoUri,
+    navigation,
+  ]);
 
-  const shouldShowCamera = draft.photoUri === null;
+  const shouldShowSourceSelection =
+    draft.photoUri === null && sourceSelection === null;
+  const shouldShowCamera = draft.photoUri === null && sourceSelection === 'camera';
   const shouldShowPermissionCard =
     shouldShowCamera && cameraPermission !== null && !cameraPermission.granted;
   const shouldShowCameraLoadingState =
     shouldShowCamera && cameraPermission === null;
   const shouldShowAddressRetry =
     draft.photoUri !== null &&
+    !draft.requiresGalleryLocationChoice &&
     !draft.isResolvingAddress &&
-    !hasResolvedAddress(draft.address);
+    !hasResolvedAddress(draft.address) &&
+    draft.locationStrategy !== null &&
+    draft.locationStrategy !== 'location-unavailable';
+  const addressCardLabel =
+    draft.locationStrategy === 'location-unavailable'
+      ? 'Location'
+      : draft.photoSource === 'gallery' &&
+          draft.locationStrategy === 'gallery-metadata'
+        ? 'Photo Address'
+        : draft.locationStrategy === 'current-device'
+          ? 'Current Address'
+          : 'Address';
+  const sourceButtonLabel =
+    draft.photoSource === 'gallery' ? 'Choose Another Photo' : 'Retake';
 
   return (
     <ScrollView
@@ -263,13 +543,45 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
       showsVerticalScrollIndicator={false}
     >
       <View style={styles.heroCard}>
-        <Text style={styles.heroEyebrow}>Field Capture</Text>
+        <Text style={styles.heroEyebrow}>Travel Stamp Draft</Text>
         <Text style={styles.heroTitle}>Create a passport-ready travel stamp.</Text>
         <Text style={styles.heroBody}>
-          Take a fresh picture, wait for the automatic address lookup, then save
-          it into your on-device diary.
+          Start by choosing how you want to add the photo, then save it with a
+          resolved location or mark the location as unavailable.
         </Text>
       </View>
+
+      {shouldShowSourceSelection ? (
+        <View style={styles.placeholderCard}>
+          <Text style={styles.placeholderTitle}>Choose your image source</Text>
+          <Text style={styles.placeholderBody}>
+            Pick a saved image from your gallery or choose the camera only when
+            you are ready to capture a new travel photo.
+          </Text>
+          <View style={styles.actionsColumn}>
+            <ActionButton
+              label="Take Photo"
+              onPress={handleChooseCameraSource}
+            />
+            <ActionButton
+              label="Choose From Gallery"
+              onPress={() => {
+                void handleChooseFromGallery();
+              }}
+              variant="secondary"
+            />
+            {galleryNeedsSettingsRecovery ? (
+              <ActionButton
+                label="Open Settings"
+                onPress={() => {
+                  void handleOpenSettings();
+                }}
+                variant="secondary"
+              />
+            ) : null}
+          </View>
+        </View>
+      ) : null}
 
       {shouldShowCameraLoadingState ? (
         <View style={styles.placeholderCard}>
@@ -278,6 +590,13 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
             We&apos;re preparing the capture panel for this entry.
           </Text>
           <ActivityIndicator color={theme.colors.accent} size="small" />
+          <ActionButton
+            label="Back to Source Options"
+            onPress={() => {
+              void resetDraft();
+            }}
+            variant="secondary"
+          />
         </View>
       ) : null}
 
@@ -285,15 +604,24 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
         <View style={styles.placeholderCard}>
           <Text style={styles.placeholderTitle}>Camera permission needed</Text>
           <Text style={styles.placeholderBody}>
-            Enable camera access so you can capture the image for this travel
-            entry.
+            Enable camera access if you want to capture a new image for this
+            travel stamp.
           </Text>
-          <ActionButton
-            label="Enable Camera"
-            onPress={() => {
-              void handleCameraPermissionRequest();
-            }}
-          />
+          <View style={styles.actionsColumn}>
+            <ActionButton
+              label="Enable Camera"
+              onPress={() => {
+                void handleCameraPermissionRequest();
+              }}
+            />
+            <ActionButton
+              label="Back to Source Options"
+              onPress={() => {
+                void resetDraft();
+              }}
+              variant="secondary"
+            />
+          </View>
         </View>
       ) : null}
 
@@ -315,13 +643,22 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
               style={styles.camera}
             />
           </View>
-          <ActionButton
-            disabled={!isCameraReady}
-            label={isCameraReady ? 'Capture Photo' : 'Preparing Camera'}
-            onPress={() => {
-              void handleCapture();
-            }}
-          />
+          <View style={styles.actionsColumn}>
+            <ActionButton
+              disabled={!isCameraReady}
+              label={isCameraReady ? 'Capture Photo' : 'Preparing Camera'}
+              onPress={() => {
+                void handleCapture();
+              }}
+            />
+            <ActionButton
+              label="Back to Source Options"
+              onPress={() => {
+                void resetDraft();
+              }}
+              variant="secondary"
+            />
+          </View>
         </View>
       ) : null}
 
@@ -336,27 +673,49 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
               transition={180}
             />
           </View>
-          <Text style={styles.previewCaption}>Captured memory preview</Text>
+          <Text style={styles.previewCaption}>
+            {draft.photoSource === 'gallery'
+              ? 'Selected gallery image preview'
+              : 'Captured memory preview'}
+          </Text>
         </View>
       ) : null}
 
       <View style={styles.addressCard}>
-        <Text style={styles.addressEyebrow}>Current Address</Text>
+        <Text style={styles.addressEyebrow}>{addressCardLabel}</Text>
         {draft.isResolvingAddress ? (
           <View style={styles.addressLoadingRow}>
             <ActivityIndicator color={theme.colors.accent} size="small" />
             <Text style={styles.addressLoadingText}>
-              Looking up your current address...
+              Resolving the address...
             </Text>
           </View>
         ) : null}
         {!draft.isResolvingAddress && hasResolvedAddress(draft.address) ? (
           <Text style={styles.addressValue}>{draft.address}</Text>
         ) : null}
-        {!draft.isResolvingAddress && !hasResolvedAddress(draft.address) ? (
+        {!draft.isResolvingAddress &&
+        draft.locationStrategy === 'location-unavailable' ? (
           <Text style={styles.addressHint}>
-            Save stays locked until the automatic reverse geocoding returns a
-            usable address.
+            Location unavailable for this stamp. The photo can still be saved.
+          </Text>
+        ) : null}
+        {!draft.isResolvingAddress &&
+        !hasResolvedAddress(draft.address) &&
+        draft.photoSource === 'gallery' &&
+        draft.requiresGalleryLocationChoice ? (
+          <Text style={styles.addressHint}>
+            This gallery image has no saved location metadata. Use your current
+            location, leave the location unavailable, or choose another photo.
+          </Text>
+        ) : null}
+        {!draft.isResolvingAddress &&
+        !hasResolvedAddress(draft.address) &&
+        draft.locationStrategy !== 'location-unavailable' &&
+        (!draft.photoSource || !draft.requiresGalleryLocationChoice) ? (
+          <Text style={styles.addressHint}>
+            Save stays locked until the app resolves a location or you mark it
+            unavailable.
           </Text>
         ) : null}
       </View>
@@ -373,18 +732,37 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
           <>
             <ActionButton
               disabled={draft.isSaving}
-              label="Retake"
+              label={sourceButtonLabel}
               onPress={() => {
-                void handleRetake();
+                void handlePrimaryReplaceAction();
               }}
               variant="secondary"
             />
+            {draft.photoSource === 'gallery' &&
+            draft.requiresGalleryLocationChoice ? (
+              <>
+                <ActionButton
+                  disabled={draft.isSaving}
+                  label="Use Current Location"
+                  onPress={() => {
+                    void handleUseCurrentLocationInstead();
+                  }}
+                  variant="secondary"
+                />
+                <ActionButton
+                  disabled={draft.isSaving}
+                  label="Leave Location Unavailable"
+                  onPress={handleLeaveLocationUnavailable}
+                  variant="secondary"
+                />
+              </>
+            ) : null}
             {shouldShowAddressRetry ? (
               <ActionButton
                 disabled={draft.isSaving}
                 label="Retry Address"
                 onPress={() => {
-                  void lookupCurrentAddress();
+                  void handleRetryLocationResolution();
                 }}
                 variant="secondary"
               />

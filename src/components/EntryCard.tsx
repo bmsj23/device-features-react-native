@@ -32,6 +32,7 @@ export const EntryCard = memo(function EntryCard({
   const handleRemove = useCallback(() => {
     onRemove(id);
   }, [id, onRemove]);
+  const hasLocation = address.trim().length > 0;
 
   return (
     <View style={styles.card}>
@@ -59,8 +60,10 @@ export const EntryCard = memo(function EntryCard({
             <Text style={styles.stampLabel}>Stamped</Text>
             <Text style={styles.metaValue}>{formatEntryDate(createdAt)}</Text>
           </View>
-          <Text style={styles.addressLabel}>Address</Text>
-          <Text style={styles.addressValue}>{address}</Text>
+          <Text style={styles.addressLabel}>Location</Text>
+          <Text style={styles.addressValue}>
+            {hasLocation ? address : 'Location unavailable'}
+          </Text>
           <Text style={styles.openHint}>Tap card to view full stamp details</Text>
         </View>
       </Pressable>

@@ -36,6 +36,22 @@
         }
       ],
       [
+        "expo-image-picker",
+        {
+          "photosPermission": "Allow Travel Diary to choose photos from your library for travel stamps.",
+          "microphonePermission": false
+        }
+      ],
+      [
+        "expo-media-library",
+        {
+          "photosPermission": "Allow Travel Diary to read photo metadata for travel stamps.",
+          "savePhotosPermission": false,
+          "isAccessMediaLocationEnabled": true,
+          "granularPermissions": ["photo"]
+        }
+      ],
+      [
         "expo-location",
         {
           "locationWhenInUsePermission": "Allow Travel Diary to attach your current address to each saved entry."

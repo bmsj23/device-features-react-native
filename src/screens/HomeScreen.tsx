@@ -57,7 +57,7 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
 
       Alert.alert(
         'Remove travel entry',
-        'This will remove the saved photo and address from your diary.',
+        'This will remove the saved photo and location details from your diary.',
         [
           {
             text: 'Cancel',
@@ -101,7 +101,7 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
         <Text style={styles.heroEyebrow}>Passport Editorial</Text>
         <Text style={styles.heroTitle}>Frame every stop with a photo stamp.</Text>
         <Text style={styles.heroBody}>
-          Capture a memory, let the app fetch your current address, and keep
+          Capture a memory, attach a location when it is available, and keep
           your travel notes stored on the device for the next revisit.
         </Text>
         <ActionButton
@@ -131,7 +131,7 @@ export function HomeScreen({ navigation }: HomeScreenProps) {
             <Text style={styles.emptyTitle}>No Entries yet</Text>
             <Text style={styles.emptyBody}>
               Start your first stamp to build a local travel journal with photo
-              memories and automatic addresses.
+              memories and optional location details.
             </Text>
             <ActionButton
               label="Create First Entry"

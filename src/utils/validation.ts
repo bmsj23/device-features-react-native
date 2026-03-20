@@ -14,6 +14,10 @@ function isFiniteNumber(value: unknown): value is number {
   return typeof value === 'number' && Number.isFinite(value);
 }
 
+function isNullableFiniteNumber(value: unknown): value is number | null {
+  return value === null || isFiniteNumber(value);
+}
+
 function isTravelEntryRecord(value: unknown): value is UnknownRecord {
   return typeof value === 'object' && value !== null;
 }
@@ -23,12 +27,19 @@ export function isTravelEntry(value: unknown): value is TravelEntry {
     return false;
   }
 
+  const hasResolvedCoordinates =
+    isFiniteNumber(value.latitude) && isFiniteNumber(value.longitude);
+  const hasUnavailableCoordinates =
+    value.latitude === null && value.longitude === null;
+
   return (
     isNonEmptyString(value.id) &&
     isNonEmptyString(value.imageUri) &&
-    isNonEmptyString(value.address) &&
-    isFiniteNumber(value.latitude) &&
-    isFiniteNumber(value.longitude) &&
+    typeof value.address === 'string' &&
+    isNullableFiniteNumber(value.latitude) &&
+    isNullableFiniteNumber(value.longitude) &&
+    (hasResolvedCoordinates ||
+      (hasUnavailableCoordinates && value.address.trim().length === 0)) &&
     isNonEmptyString(value.createdAt)
   );
 }

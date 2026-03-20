@@ -59,6 +59,42 @@ function formatResolvedAddress(
   return '';
 }
 
+export async function resolveAddressFromCoordinatesAsync(coordinates: {
+  latitude: number;
+  longitude: number;
+}): Promise<{
+  latitude: number;
+  longitude: number;
+  address: string;
+}> {
+  try {
+    const reverseGeocode = await Location.reverseGeocodeAsync(coordinates);
+    const address = formatResolvedAddress(reverseGeocode);
+
+    if (address.length === 0) {
+      throw new LocationLookupError(
+        'address-not-found',
+        'We could not determine a usable address for this location yet.'
+      );
+    }
+
+    return {
+      latitude: coordinates.latitude,
+      longitude: coordinates.longitude,
+      address,
+    };
+  } catch (error) {
+    if (error instanceof LocationLookupError) {
+      throw error;
+    }
+
+    throw new LocationLookupError(
+      'lookup-failed',
+      'We could not fetch an address from these coordinates. Please try again.'
+    );
+  }
+}
+
 export async function resolveCurrentAddressAsync(): Promise<{
   latitude: number;
   longitude: number;
@@ -86,21 +122,10 @@ export async function resolveCurrentAddressAsync(): Promise<{
     const position = await Location.getCurrentPositionAsync({
       accuracy: Location.Accuracy.Balanced,
     });
-    const { latitude, longitude } = position.coords;
-    const reverseGeocode = await Location.reverseGeocodeAsync({
-      latitude,
-      longitude,
+    return await resolveAddressFromCoordinatesAsync({
+      latitude: position.coords.latitude,
+      longitude: position.coords.longitude,
     });
-    const address = formatResolvedAddress(reverseGeocode);
-
-    if (address.length === 0) {
-      throw new LocationLookupError(
-        'address-not-found',
-        'We could not determine a usable address for this location yet.'
-      );
-    }
-
-    return { latitude, longitude, address };
   } catch (error) {
     if (error instanceof LocationLookupError) {
       throw error;
