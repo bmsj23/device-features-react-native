@@ -45,6 +45,8 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
   );
   const [sourceSelection, setSourceSelection] = useState<SourceSelection>(null);
   const [isCameraReady, setIsCameraReady] = useState(false);
+  const [isGallerySelectionInProgress, setIsGallerySelectionInProgress] =
+    useState(false);
   const [galleryNeedsSettingsRecovery, setGalleryNeedsSettingsRecovery] =
     useState(false);
   const cameraReference = useRef<CameraView | null>(null);
@@ -57,6 +59,7 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
       draftPhotoUriReference.current = null;
       setSourceSelection(options?.keepCameraReady ? 'camera' : null);
       setIsCameraReady(false);
+      setIsGallerySelectionInProgress(false);
       setGalleryNeedsSettingsRecovery(false);
       setDraft(createInitialDraftEntryState());
 
@@ -234,6 +237,7 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
   const handleChooseFromGallery = useCallback(async () => {
     setGalleryNeedsSettingsRecovery(false);
     setSourceSelection(null);
+    setIsGallerySelectionInProgress(true);
 
     try {
       const permissionResponse = await requestGalleryPermissionsAsync();
@@ -302,6 +306,8 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
         errorMessage:
           'We could not open the photo library right now. Please try again.',
       }));
+    } finally {
+      setIsGallerySelectionInProgress(false);
     }
   }, [applyGalleryMetadataLocationToDraft, replaceDraftPhotoAsync]);
 
@@ -417,6 +423,7 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
     draft.photoUri !== null &&
     !draft.isResolvingAddress &&
     !draft.isSaving &&
+    !isGallerySelectionInProgress &&
     (draft.locationStrategy === 'location-unavailable' ||
       (draft.latitude !== null &&
         draft.longitude !== null &&
@@ -506,6 +513,7 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
     draft.locationStrategy,
     draft.longitude,
     draft.photoUri,
+    isGallerySelectionInProgress,
     navigation,
   ]);
 
@@ -520,9 +528,15 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
     draft.photoUri !== null &&
     !draft.requiresGalleryLocationChoice &&
     !draft.isResolvingAddress &&
+    !isGallerySelectionInProgress &&
     !hasResolvedAddress(draft.address) &&
     draft.locationStrategy !== null &&
     draft.locationStrategy !== 'location-unavailable';
+  const galleryTransitionMessage = isGallerySelectionInProgress
+    ? draft.photoUri
+      ? 'Preparing the selected gallery photo and checking its saved location...'
+      : 'Opening your photo library...'
+    : null;
   const addressCardLabel =
     draft.locationStrategy === 'location-unavailable'
       ? 'Location'
@@ -560,10 +574,12 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
           </Text>
           <View style={styles.actionsColumn}>
             <ActionButton
+              disabled={isGallerySelectionInProgress}
               label="Take Photo"
               onPress={handleChooseCameraSource}
             />
             <ActionButton
+              disabled={isGallerySelectionInProgress}
               label="Choose From Gallery"
               onPress={() => {
                 void handleChooseFromGallery();
@@ -672,12 +688,29 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
               style={styles.previewImage}
               transition={180}
             />
+            {galleryTransitionMessage ? (
+              <View style={styles.previewOverlay}>
+                <ActivityIndicator color={theme.colors.accent} size="small" />
+                <Text style={styles.previewOverlayText}>
+                  {galleryTransitionMessage}
+                </Text>
+              </View>
+            ) : null}
           </View>
           <Text style={styles.previewCaption}>
             {draft.photoSource === 'gallery'
               ? 'Selected gallery image preview'
               : 'Captured memory preview'}
           </Text>
+        </View>
+      ) : null}
+
+      {galleryTransitionMessage ? (
+        <View style={styles.statusCard}>
+          <View style={styles.statusRow}>
+            <ActivityIndicator color={theme.colors.accent} size="small" />
+            <Text style={styles.statusText}>{galleryTransitionMessage}</Text>
+          </View>
         </View>
       ) : null}
 
@@ -731,7 +764,7 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
         {draft.photoUri ? (
           <>
             <ActionButton
-              disabled={draft.isSaving}
+              disabled={draft.isSaving || isGallerySelectionInProgress}
               label={sourceButtonLabel}
               onPress={() => {
                 void handlePrimaryReplaceAction();
@@ -742,7 +775,7 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
             draft.requiresGalleryLocationChoice ? (
               <>
                 <ActionButton
-                  disabled={draft.isSaving}
+                  disabled={draft.isSaving || isGallerySelectionInProgress}
                   label="Use Current Location"
                   onPress={() => {
                     void handleUseCurrentLocationInstead();
@@ -750,7 +783,7 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
                   variant="secondary"
                 />
                 <ActionButton
-                  disabled={draft.isSaving}
+                  disabled={draft.isSaving || isGallerySelectionInProgress}
                   label="Leave Location Unavailable"
                   onPress={handleLeaveLocationUnavailable}
                   variant="secondary"
@@ -759,7 +792,7 @@ export function AddTravelEntryScreen({ navigation }: AddEntryScreenProps) {
             ) : null}
             {shouldShowAddressRetry ? (
               <ActionButton
-                disabled={draft.isSaving}
+                disabled={draft.isSaving || isGallerySelectionInProgress}
                 label="Retry Address"
                 onPress={() => {
                   void handleRetryLocationResolution();
@@ -877,11 +910,28 @@ const createStyles = (theme: ReturnType<typeof useAppTheme>) =>
       borderRadius: theme.radius.lg,
       backgroundColor: theme.colors.paper,
       minHeight: 300,
+      position: 'relative',
     },
     previewImage: {
       width: '100%',
       height: 320,
       backgroundColor: theme.colors.paper,
+    },
+    previewOverlay: {
+      ...StyleSheet.absoluteFillObject,
+      alignItems: 'center',
+      justifyContent: 'center',
+      gap: theme.spacing.sm,
+      backgroundColor:
+        theme.mode === 'dark' ? 'rgba(3, 3, 3, 0.72)' : 'rgba(253, 246, 234, 0.82)',
+      paddingHorizontal: theme.spacing.lg,
+    },
+    previewOverlayText: {
+      color: theme.colors.text,
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: '600',
+      textAlign: 'center',
     },
     previewCaption: {
       color: theme.colors.mutedText,
@@ -890,6 +940,25 @@ const createStyles = (theme: ReturnType<typeof useAppTheme>) =>
       fontWeight: '700',
       letterSpacing: 1.2,
       textTransform: 'uppercase',
+    },
+    statusCard: {
+      borderRadius: theme.radius.xl,
+      borderWidth: 1,
+      borderColor: theme.colors.border,
+      backgroundColor: theme.colors.surface,
+      padding: theme.spacing.lg,
+    },
+    statusRow: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: theme.spacing.sm,
+    },
+    statusText: {
+      flex: 1,
+      color: theme.colors.text,
+      fontSize: 14,
+      lineHeight: 20,
+      fontWeight: '600',
     },
     addressCard: {
       gap: theme.spacing.sm,

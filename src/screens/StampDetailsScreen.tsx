@@ -80,12 +80,6 @@ export function StampDetailsScreen({
               {formatEntryDate(selectedEntry.createdAt)}
             </Text>
           </View>
-          <View style={styles.metaChip}>
-            <Text style={styles.metaChipLabel}>Stamp ID</Text>
-            <Text numberOfLines={1} style={styles.metaChipValue}>
-              {selectedEntry.id}
-            </Text>
-          </View>
         </View>
 
         <View style={styles.section}>

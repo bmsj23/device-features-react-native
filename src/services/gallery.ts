@@ -1,106 +1,117 @@
+import { Platform } from 'react-native';
 import * as ImagePicker from 'expo-image-picker';
 import * as MediaLibrary from 'expo-media-library';
 
+import {
+  extractCoordinatesFromExif,
+  isValidCoordinatePair,
+} from '../utils/address';
+
+type GalleryPermissionResponse = {
+  status: 'granted' | 'denied' | 'undetermined';
+  canAskAgain: boolean;
+  accessPrivileges?: 'all' | 'limited' | 'none';
+};
 type Coordinates = {
   latitude: number;
   longitude: number;
 };
 
-function toFiniteNumber(value: unknown): number | null {
-  if (typeof value === 'number' && Number.isFinite(value)) {
-    return value;
+async function findMatchingAssetIdAsync(
+  selectedAsset: ImagePicker.ImagePickerAsset
+): Promise<string | null> {
+  const targetFileName = selectedAsset.fileName ?? null;
+
+  if (!targetFileName) {
+    return null;
   }
 
-  if (typeof value === 'string') {
-    const parsedValue = Number.parseFloat(value);
+  let after: string | undefined;
+  let pageCount = 0;
 
-    return Number.isFinite(parsedValue) ? parsedValue : null;
-  }
+  while (pageCount < 5) {
+    const page = await MediaLibrary.getAssetsAsync({
+      mediaType: MediaLibrary.MediaType.photo,
+      first: 200,
+      after,
+      sortBy: [MediaLibrary.SortBy.creationTime],
+    });
 
-  if (
-    typeof value === 'object' &&
-    value !== null &&
-    'numerator' in value &&
-    'denominator' in value
-  ) {
-    const numerator = toFiniteNumber(
-      (value as { numerator: unknown }).numerator
-    );
-    const denominator = toFiniteNumber(
-      (value as { denominator: unknown }).denominator
-    );
+    const matchingAsset = page.assets.find((asset) => {
+      const matchesFileName = asset.filename === targetFileName;
+      const matchesDimensions =
+        asset.width === selectedAsset.width && asset.height === selectedAsset.height;
 
-    if (numerator === null || denominator === null || denominator === 0) {
-      return null;
+      return matchesFileName && matchesDimensions;
+    });
+
+    if (matchingAsset) {
+      return matchingAsset.id;
     }
 
-    return numerator / denominator;
+    if (!page.hasNextPage) {
+      break;
+    }
+
+    after = page.endCursor;
+    pageCount += 1;
   }
 
   return null;
 }
 
-function normalizeExifCoordinate(value: unknown): number | null {
-  if (Array.isArray(value) && value.length === 3) {
-    const degrees = toFiniteNumber(value[0]);
-    const minutes = toFiniteNumber(value[1]);
-    const seconds = toFiniteNumber(value[2]);
-
-    if (degrees === null || minutes === null || seconds === null) {
-      return null;
-    }
-
-    return degrees + minutes / 60 + seconds / 3600;
+function mergeGalleryPermissionResponses(
+  pickerPermission: ImagePicker.MediaLibraryPermissionResponse,
+  mediaLibraryPermission: MediaLibrary.PermissionResponse
+): GalleryPermissionResponse {
+  if (
+    pickerPermission.status === 'granted' &&
+    mediaLibraryPermission.status === 'granted'
+  ) {
+    return {
+      status: 'granted',
+      canAskAgain:
+        pickerPermission.canAskAgain && mediaLibraryPermission.canAskAgain,
+      accessPrivileges:
+        mediaLibraryPermission.accessPrivileges ??
+        pickerPermission.accessPrivileges,
+    };
   }
 
-  return toFiniteNumber(value);
+  const deniedPermission =
+    pickerPermission.status !== 'granted'
+      ? pickerPermission
+      : mediaLibraryPermission;
+
+  return {
+    status: deniedPermission.status,
+    canAskAgain:
+      pickerPermission.canAskAgain && mediaLibraryPermission.canAskAgain,
+    accessPrivileges:
+      mediaLibraryPermission.accessPrivileges ?? pickerPermission.accessPrivileges,
+  };
 }
 
-function applyCoordinateReference(
-  coordinate: number | null,
-  reference: unknown
-): number | null {
-  if (coordinate === null) {
-    return null;
+export async function requestGalleryPermissionsAsync(): Promise<GalleryPermissionResponse> {
+  const pickerPermission = await ImagePicker.requestMediaLibraryPermissionsAsync();
+
+  if (pickerPermission.status !== 'granted') {
+    return {
+      status: pickerPermission.status,
+      canAskAgain: pickerPermission.canAskAgain,
+      accessPrivileges: pickerPermission.accessPrivileges,
+    };
   }
 
-  if (reference === 'S' || reference === 'W') {
-    return -Math.abs(coordinate);
-  }
-
-  return coordinate;
-}
-
-function parseCoordinatesFromExif(
-  exif: Record<string, unknown> | object | null | undefined
-): Coordinates | null {
-  if (!exif || typeof exif !== 'object') {
-    return null;
-  }
-
-  const exifRecord = exif as Record<string, unknown>;
-  const latitude = applyCoordinateReference(
-    normalizeExifCoordinate(
-      exifRecord.GPSLatitude ?? exifRecord.latitude ?? exifRecord.Latitude
-    ),
-    exifRecord.GPSLatitudeRef
-  );
-  const longitude = applyCoordinateReference(
-    normalizeExifCoordinate(
-      exifRecord.GPSLongitude ?? exifRecord.longitude ?? exifRecord.Longitude
-    ),
-    exifRecord.GPSLongitudeRef
+  const mediaLibraryPermission = await MediaLibrary.requestPermissionsAsync(
+    false,
+    Platform.OS === 'android' ? ['photo'] : undefined
   );
 
-  if (latitude === null || longitude === null) {
-    return null;
-  }
-
-  return { latitude, longitude };
-}
-
-export async function requestGalleryPermissionsAsync() {
-  return ImagePicker.requestMediaLibraryPermissionsAsync();
+  return mergeGalleryPermissionResponses(
+    pickerPermission,
+    mediaLibraryPermission
+  );
 }
 
 export async function pickSingleImageFromGalleryAsync(): Promise<ImagePicker.ImagePickerAsset | null> {
@@ -108,6 +119,8 @@ export async function pickSingleImageFromGalleryAsync(): Promise<ImagePicker.Ima
     allowsMultipleSelection: false,
     exif: true,
     mediaTypes: ['images'],
+    preferredAssetRepresentationMode:
+      ImagePicker.UIImagePickerPreferredAssetRepresentationMode.Current,
     quality: 1,
   });
 
@@ -121,18 +134,32 @@ export async function pickSingleImageFromGalleryAsync(): Promise<ImagePicker.Ima
 export async function extractGalleryCoordinatesAsync(
   selectedAsset: ImagePicker.ImagePickerAsset
 ): Promise<Coordinates | null> {
-  if (selectedAsset.assetId) {
+  const resolvedAssetId =
+    selectedAsset.assetId ?? (await findMatchingAssetIdAsync(selectedAsset));
+
+  if (resolvedAssetId) {
     try {
-      const assetInfo = await MediaLibrary.getAssetInfoAsync(selectedAsset.assetId);
+      const assetInfo = await MediaLibrary.getAssetInfoAsync(
+        resolvedAssetId,
+        {
+          shouldDownloadFromNetwork: true,
+        }
+      );
 
       if (assetInfo.location) {
-        return {
+        const coordinates = {
           latitude: assetInfo.location.latitude,
           longitude: assetInfo.location.longitude,
         };
+
+        if (isValidCoordinatePair(coordinates)) {
+          return coordinates;
+        }
       }
 
-      const assetExifCoordinates = parseCoordinatesFromExif(assetInfo.exif);
+      const assetExifCoordinates = extractCoordinatesFromExif(
+        (assetInfo.exif as Record<string, unknown> | null | undefined) ?? null
+      );
 
       if (assetExifCoordinates) {
         return assetExifCoordinates;
@@ -142,5 +169,7 @@ export async function extractGalleryCoordinatesAsync(
     }
   }
 
-  return parseCoordinatesFromExif(selectedAsset.exif);
+  return extractCoordinatesFromExif(
+    (selectedAsset.exif as Record<string, unknown> | null | undefined) ?? null
+  );
 }

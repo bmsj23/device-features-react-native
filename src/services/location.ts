@@ -1,5 +1,10 @@
 import * as Location from 'expo-location';
 
+import {
+  buildAddressFromGeocodeResult,
+  isValidCoordinatePair,
+} from '../utils/address';
+
 export type LocationLookupErrorCode =
   | 'permission-denied'
   | 'services-disabled'
@@ -16,49 +21,6 @@ export class LocationLookupError extends Error {
   }
 }
 
-function formatSingleAddress(
-  address: Location.LocationGeocodedAddress
-): string {
-  const seenParts = new Set<string>();
-  const orderedParts = [
-    address.name,
-    address.street,
-    address.district,
-    address.city,
-    address.subregion,
-    address.region,
-    address.country,
-  ]
-    .filter((part): part is string => typeof part === 'string' && part.trim().length > 0)
-    .map((part) => part.trim())
-    .filter((part) => {
-      const normalized = part.toLowerCase();
-
-      if (seenParts.has(normalized)) {
-        return false;
-      }
-
-      seenParts.add(normalized);
-      return true;
-    });
-
-  return orderedParts.join(', ');
-}
-
-function formatResolvedAddress(
-  addresses: Location.LocationGeocodedAddress[]
-): string {
-  for (const address of addresses) {
-    const formattedAddress = formatSingleAddress(address);
-
-    if (formattedAddress.length > 0) {
-      return formattedAddress;
-    }
-  }
-
-  return '';
-}
-
 export async function resolveAddressFromCoordinatesAsync(coordinates: {
   latitude: number;
   longitude: number;
@@ -67,9 +29,16 @@ export async function resolveAddressFromCoordinatesAsync(coordinates: {
   longitude: number;
   address: string;
 }> {
+  if (!isValidCoordinatePair(coordinates)) {
+    throw new LocationLookupError(
+      'lookup-failed',
+      'We could not read a usable location from this photo.'
+    );
+  }
+
   try {
     const reverseGeocode = await Location.reverseGeocodeAsync(coordinates);
-    const address = formatResolvedAddress(reverseGeocode);
+    const address = buildAddressFromGeocodeResult(reverseGeocode);
 
     if (address.length === 0) {
       throw new LocationLookupError(
